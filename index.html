@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Marktfabrik</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;600;700&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e6e4de;--fg:#1d2a33;--card:#f4f2ed;--br:#bdb9ad;--ac:#0f766e;--ac2:#b45309;--bad:#b91c1c;--cell:#d7d4cb}
+@media(prefers-color-scheme:dark){:root{--bg:#1a2026;--fg:#e4e7ea;--card:#232b32;--br:#3d4852;--ac:#2dd4bf;--ac2:#f59e0b;--bad:#f87171;--cell:#2d363e}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 Barlow,system-ui,sans-serif}
+h1,h2,h3,.tab,button,.num{font-family:'Barlow Semi Condensed',system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;padding:10px 16px;background:var(--fg);color:var(--bg)}
+header h1{margin:0;font-size:22px}.num{font-size:20px;font-weight:700}
+.sp{margin-left:auto}
+button{font-size:14px;border:1px solid var(--br);background:var(--card);color:var(--fg);padding:5px 10px;border-radius:3px;cursor:pointer}
+button:hover{border-color:var(--ac)}button:focus-visible{outline:2px solid var(--ac);outline-offset:1px}
+button:disabled{opacity:.45;cursor:default}button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+header button{background:transparent;color:inherit;border-color:#7a8791}
+nav{display:flex;gap:2px;padding:8px 16px 0;border-bottom:2px solid var(--fg)}
+.tab{border:0;border-radius:3px 3px 0 0;padding:8px 18px;font-size:16px;font-weight:600;background:var(--cell)}
+.tab.on{background:var(--fg);color:var(--bg)}
+main{padding:16px;max-width:1000px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--br);border-radius:4px;padding:12px 14px;margin-bottom:12px}
+h2{margin:0 0 6px;font-size:19px}h3{margin:10px 0 4px;font-size:16px}
+.muted{opacity:.7;font-size:13px}.neg{color:var(--bad)}.pos{color:var(--ac)}
+svg.map{width:100%;max-height:560px;background:var(--card);border:1px solid var(--br);border-radius:4px;display:block}
+svg text{font-family:'Barlow Semi Condensed',sans-serif;fill:var(--fg)}
+.node{cursor:pointer}.node:hover circle{stroke:var(--ac2);stroke-width:.8}
+.g{display:grid;grid-template-columns:repeat(9,1fr);gap:3px;max-width:600px;margin:8px 0}
+.g button{aspect-ratio:1;padding:0;font-size:20px;background:var(--cell);border-radius:2px}
+.g .M{background:var(--ac);color:#fff}.g .B{background:var(--br)}.g .E,.g .A{background:var(--ac2);color:#fff}
+.tools,.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:4px}
+table{border-collapse:collapse;width:100%}td{padding:5px 6px;border-bottom:1px solid var(--br)}
+#start{position:fixed;inset:0;background:var(--bg);overflow:auto;padding:24px 16px;z-index:5}
+#start .in{max-width:760px;margin:0 auto}
+.pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin-top:10px}
+.pick button{text-align:left;padding:10px}
+.dot{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+input{font:inherit;padding:6px 8px;border:1px solid var(--br);border-radius:3px;background:var(--card);color:var(--fg);width:90px}
+input#nm{width:200px}
+</style>
+</head>
+<body>
+<div id="start"><div class="in">Verbinde mit der Fabrikwelt …</div></div>
+<header>
+  <h1>Marktfabrik</h1>
+  <div>Geld <span class="num" id="hm">0</span> €</div>
+  <div>Produktion <span class="num" id="hr">0</span>/s</div>
+  <div>Spieler <span class="num" id="hp">0</span></div>
+  <div class="sp"><button onclick="leave()">Fabrik aufgeben</button></div>
+</header>
+<nav id="tabs"></nav>
+<main id="main"></main>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {getDatabase,ref,onValue,set,get,runTransaction} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+const app=initializeApp({apiKey:"AIzaSyCxPiwSvulutFAWjXdgRtZApqLgrsRiAgI",authDomain:"marktfabrik.firebaseapp.com",databaseURL:"https://marktfabrik-default-rtdb.europe-west1.firebasedatabase.app",projectId:"marktfabrik",storageBucket:"marktfabrik.firebasestorage.app",messagingSenderId:"784207356146",appId:"1:784207356146:web:7eeda95c356d3d976c306b"});
+const db=getDatabase(app);
+
+const IT={erz:['Erz',10,'#a8703a'],holz:['Holz',8,'#4d8c3a'],korn:['Getreide',6,'#c9a227'],eisen:['Eisen',28,'#6b7a8c'],brett:['Bretter',22,'#b5834a'],mehl:['Mehl',16,'#a39a80'],werk:['Werkzeug',90,'#0f766e'],brot:['Brot',45,'#d97706']};
+const RC={erz:['Bergwerk',{}],holz:['Forstbetrieb',{}],korn:['Farm',{}],eisen:['Schmelze',{erz:2}],brett:['Sägewerk',{holz:2}],mehl:['Mühle',{korn:2}],werk:['Werkstatt',{eisen:1,brett:1}],brot:['Bäckerei',{mehl:1,holz:1}]};
+const FINAL=['werk','brot'];
+const NN=['Nord','Ost','Süd','West','Berg','Tal','Fluss','See','Hain','Stein','Mark','Hafen'];
+const PRODS=['erz','holz','korn','eisen','brett','mehl','werk','brot','erz','holz','korn','eisen','brett','mehl','werk','brot','erz','korn','eisen','werk'];
+const POS=PRODS.map((_,i)=>{const r=Math.floor(i/5),c=i%5;return[12+c*19+((r*7+c*3)%5-2),14+r*24+((c*5+r)%3-1)]});
+const W=9,H=6,COST={M:120,B:4,E:30,A:30},UP={M:.4,B:.02,E:0,A:0};
+const SYM={M:'⚙',B:'▪',E:'⇥',A:'⇤',X:'✕'};
+const $=s=>document.querySelector(s),fmt=n=>Math.round(n).toLocaleString('de-DE');
+const uid=(()=>{try{let u=localStorage.getItem('mf-uid');if(!u){u=Math.random().toString(36).slice(2,12);localStorage.setItem('mf-uid',u)}return u}catch(e){return Math.random().toString(36).slice(2,12)}})();
+let R={},V={},P=null,G=null,ST={rate:0,up:0,n:0,ok:0,avg:0},off=0,tab='map',sel=null,tool='M',sat={werk:0,brot:0},busy=false,tk=0;
+const nq=()=>Math.floor((Date.now()+off)/10000);
+const fref=id=>ref(db,'world/factories/'+id);
+const enc=g=>g.map(r=>r.map(c=>c||'.').join('')).join('/');
+const dec=s=>s.split('/').map(r=>[...r].map(c=>c==='.'?'':c));
+function initGrid(){const g=Array.from({length:H},()=>Array(W).fill(''));g[2][0]='E';g[2][8]='A';g[2][4]='M';for(const x of [1,2,3,5,6,7])g[2][x]='B';return g}
+
+// Layout-Auswertung
+function bfs(g,ch){const d=Array.from({length:H},()=>Array(W).fill(Infinity)),q=[];
+  g.forEach((r,y)=>r.forEach((c,x)=>{if(c===ch){d[y][x]=0;q.push([x,y])}}));
+  while(q.length){const [x,y]=q.shift();for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const a=x+dx,b=y+dy;if(a<0||b<0||a>=W||b>=H)continue;const c=g[b][a];if((c==='B'||c==='E'||c==='A')&&d[b][a]===Infinity){d[b][a]=d[y][x]+1;q.push([a,b])}}}return d}
+function near(d,x,y){let m=Infinity;for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const a=x+dx,b=y+dy;if(a<0||b<0||a>=W||b>=H)continue;if(d[b][a]+1<m)m=d[b][a]+1}return m}
+function stats(g,p){const raw=!Object.keys(RC[p][1]).length,dA=bfs(g,'A'),dE=bfs(g,'E');let n=0,ok=0,rate=0,up=0,path=0;
+  g.forEach((r,y)=>r.forEach((c,x)=>{up+=UP[c]||0;if(c!=='M')return;n++;const a=near(dA,x,y),e=raw?0:near(dE,x,y);if(a===Infinity||e===Infinity)return;ok++;path+=a+e;rate+=1/(3+.4*(a+e))}));
+  return{n,ok,rate,up,avg:ok?path/ok:0}}
+
+// Welt-Simulation: gleiche Rechnung auf jedem Client, Stand wird nur bei Handel gespeichert
+function proj(f){const c=JSON.parse(JSON.stringify(f)),need=RC[c.p][1],npc=!c.owner,N=nq(),rate=npc?c.eff*.3:(c.rate||0);
+  c.inv=c.inv||{};c.pr=c.pr||0;const n=Math.min(360,Math.max(0,N-c.t));
+  for(let i=0;i<n;i++){
+    if(npc){for(const k in need)c.inv[k]=Math.min(25,(c.inv[k]||0)+.6*c.eff);c.stock=Math.max(0,c.stock-.8)}
+    c.pr+=rate*10;
+    while(c.pr>=1){if(c.stock>=(npc?60:300)||!Object.keys(need).every(k=>(c.inv[k]||0)>=need[k])){c.pr=Math.min(c.pr,1);break}
+      for(const k in need)c.inv[k]-=need[k];c.stock++;c.pr--}}
+  c.t=N;return c}
+const ask=f=>f.price>0?f.price:Math.round(IT[f.p][1]*(1.35-.7*Math.min(f.stock/50,1)));
+const bid=(f,k)=>Math.round(IT[k][1]*(.6+.5*(1-Math.min((f.inv[k]||0)/30,1))));
+const cityP=k=>Math.round(IT[k][1]*(.85+.2*Math.sin(nq()/4+IT[k][1]))*(1-Math.min(.5,sat[k]||0)));
+const owner=f=>f.owner?(f.owner===uid?'Du':f.ownerName||'Spieler'):'NPC';
+
+async function seed(){await runTransaction(ref(db,'world/factories'),cur=>{if(cur)return;const o={};
+  POS.forEach((q,i)=>{const p=PRODS[i],inv={};for(const k in RC[p][1])inv[k]=8;
+    o[i]={p,nm:RC[p][0]+' '+NN[i%12]+(i>=12?' II':''),x:q[0],y:q[1],eff:+(.6+Math.random()*.6).toFixed(2),rate:0,stock:18,inv,t:nq(),pr:0,earn:0}});return o})}
+async function claim(p,name){
+  for(const id of Object.keys(R).filter(i=>R[i].p===p&&!R[i].owner)){let ok=false;const g=initGrid();
+    await runTransaction(fref(id),cur=>{ok=false;if(!cur||cur.owner)return;const f=proj(cur);f.owner=uid;f.ownerName=name;f.nm=name+' ('+RC[p][0]+')';f.grid=enc(g);f.rate=stats(g,p).rate;f.price=0;ok=true;return f});
+    if(ok){P={name,money:600,w:{},fid:id,prod:p};G=g;sel=+id;await savePlayer();return true}}
+  return false}
+function savePlayer(){return set(ref(db,'players/'+uid),P)}
+function saveLayout(){const g=G;runTransaction(fref(P.fid),cur=>{if(!cur||cur.owner!==uid)return;const f=proj(cur);f.grid=enc(g);f.rate=stats(g,P.prod).rate;return f})}
+
+// Handel (alles als Transaktion, damit nichts doppelt verkauft wird)
+async function trade(id,kind,k,n){let out=null;
+  await runTransaction(fref(id),cur=>{out=null;if(!cur)return;const f=proj(cur);let c=0,tot=0;
+    if(kind==='buy'){while(c<n&&f.stock>=1&&tot+ask(f)<=P.money&&(P.w[f.p]||0)+c<300){tot+=ask(f);f.stock--;c++}}
+    else if(kind==='sell'){while(c<n&&c<(P.w[k]||0)&&(f.inv[k]||0)<40){tot+=bid(f,k);f.inv[k]=(f.inv[k]||0)+1;c++}}
+    else if(kind==='load'){c=Math.min(n,P.w[k]||0);f.inv[k]=(f.inv[k]||0)+c}
+    else if(kind==='city'){const p=cityP(k);while(c<n&&f.stock>=1){tot+=p;f.stock--;c++}}
+    if(!c)return;
+    if(f.owner&&f.owner!==uid){f.earn=(f.earn||0)+(kind==='buy'?tot:-tot)}
+    out={c,tot};return f});
+  if(!out)return;const{c,tot}=out;
+  if(kind==='buy'){P.money-=tot;P.w[IT[R[id].p]?R[id].p:k]=(P.w[R[id].p]||0)+c}
+  else if(kind==='sell'){P.money+=tot;P.w[k]-=c}
+  else if(kind==='load'){P.w[k]-=c}
+  else{P.money+=tot;sat[k]=(sat[k]||0)+.015*c}
+  savePlayer();head();render()}
+function collect(){const f=R[P.fid];if(!f||!f.earn||busy)return;busy=true;let e=0;
+  runTransaction(ref(db,'world/factories/'+P.fid+'/earn'),cur=>{e=cur||0;return 0}).then(()=>{P.money+=e;busy=false;savePlayer()}).catch(()=>busy=false)}
+function place(x,y){const c=G[y][x];
+  if(tool==='X'){if(c){P.money+=Math.floor(COST[c]/2);G[y][x]=''}}
+  else if(!c&&P.money>=COST[tool]){P.money-=COST[tool];G[y][x]=tool}else return;
+  ST=stats(G,P.prod);saveLayout();savePlayer();head();render()}
+function setPrice(){const v=Math.max(0,+$('#pr').value|0);runTransaction(fref(P.fid),cur=>{if(!cur||cur.owner!==uid)return;const f=proj(cur);f.price=v;return f})}
+async function leave(){if(!P||!confirm('Fabrik aufgeben? Sie wird wieder von einem NPC geführt.'))return;
+  const id=P.fid;await runTransaction(fref(id),cur=>{if(!cur||cur.owner!==uid)return;const f=proj(cur);delete f.owner;delete f.ownerName;delete f.grid;f.rate=0;f.price=0;f.nm=RC[f.p][0]+' '+NN[id%12]+(id>=12?' II':'');return f});
+  await set(ref(db,'players/'+uid),null);P=null;G=null;pick()}
+
+// Darstellung
+function head(){if(!P)return;$('#hm').textContent=fmt(P.money);$('#hm').className='num'+(P.money<0?' neg':'');
+  $('#hr').textContent=ST.rate.toFixed(2);$('#hp').textContent=Object.values(R).filter(f=>f.owner).length}
+function render(){if(!P)return;
+  $('#tabs').innerHTML=[['map','Karte'],['fab','Meine Fabrik'],['lager','Lager & Stadt']].map(t=>`<button class="tab ${tab===t[0]?'on':''}" onclick="setTab('${t[0]}')">${t[1]}</button>`).join('');
+  $('#main').innerHTML=tab==='map'?vMap():tab==='fab'?vFab():vLager();if(tab==='fab')upd()}
+function vMap(){let s='<svg class="map" viewBox="0 0 100 100" onclick="mapClick(event)" role="img" aria-label="Karte aller Fabriken">';
+  const ids=Object.keys(V);
+  for(const a of ids)for(const b of ids)if(RC[V[b].p][1][V[a].p])s+=`<line x1="${V[a].x}" y1="${V[a].y}" x2="${V[b].x}" y2="${V[b].y}" stroke="${IT[V[a].p][2]}" stroke-opacity=".22" stroke-width=".4"/>`;
+  s+='<rect x="43" y="48" width="14" height="4" rx=".8" fill="none" stroke="currentColor" stroke-width=".4"/><text x="50" y="51" font-size="2.8" text-anchor="middle" font-weight="700">Stadt</text>';
+  for(const id of ids){const f=V[id],me=f.owner===uid;
+    s+=`<g class="node" data-id="${id}"><circle cx="${f.x}" cy="${f.y}" r="${me?4.8:3.8}" fill="${IT[f.p][2]}" stroke="${id==sel?'var(--ac2)':me?'var(--fg)':f.owner?'var(--ac)':'none'}" stroke-width="${id==sel?1:.7}"/><text x="${f.x}" y="${f.y+1}" font-size="2.6" text-anchor="middle" style="fill:#fff;font-weight:700">${IT[f.p][0].slice(0,3)}</text><text x="${f.x}" y="${f.y+7.4}" font-size="2.3" text-anchor="middle">${owner(f)} · ${RC[f.p][0]}</text></g>`}
+  s+='</svg><p class="muted">Ring in Türkis = von einem Spieler geführt. Linien zeigen Lieferbeziehungen. Klicke eine Fabrik zum Handeln.</p>';
+  return s+(sel!==null&&V[sel]?fPanel(V[sel],sel):'')}
+function fPanel(f,id){const need=Object.entries(RC[f.p][1]);
+  let h=`<div class="card"><h2><span class="dot" style="background:${IT[f.p][2]}"></span>${f.nm}</h2><p class="muted">Geführt von: ${owner(f)}</p>`;
+  if(f.owner===uid)return h+'<p>Das ist deine Fabrik. Layout im Reiter „Meine Fabrik“, Lager und Preis unter „Lager & Stadt“.</p></div>';
+  h+=`<h3>Kaufen: ${IT[f.p][0]}</h3><div class="row"><span>${f.stock|0} auf Lager · <b>${ask(f)} €</b> pro Stück</span><button onclick="trade(${id},'buy','',1)">+1</button><button onclick="trade(${id},'buy','',10)">+10</button><button onclick="trade(${id},'buy','',1e9)">Max</button></div>`;
+  if(need.length){h+='<h3>Verkaufen an diese Fabrik</h3>';for(const [k] of need)h+=`<div class="row"><span>${IT[k][0]}: <b>${bid(f,k)} €</b> (du trägst ${P.w[k]||0})</span><button onclick="trade(${id},'sell','${k}',1)">1</button><button onclick="trade(${id},'sell','${k}',10)">10</button><button onclick="trade(${id},'sell','${k}',1e9)">Alle</button></div>`}
+  return h+'</div>'}
+function vFab(){const raw=!Object.keys(RC[P.prod][1]).length;
+  return `<div class="card"><h2>${RC[P.prod][0]}: Layout</h2><p class="muted">${raw?'Dein Betrieb braucht kein Material. Verbinde Maschinen über Bänder (▪) mit dem Ausgang (⇤).':'Eingang (⇥) holt Material aus dem Werkslager, Ausgang (⇤) liefert Fertiges. Maschinen müssen über Bänder (▪) mit beiden verbunden sein.'} Kürzere Wege bedeuten einen schnelleren Takt. Deine Fabrik produziert auch, wenn du offline bist.</p>
+  <div class="tools">${['M','B','E','A','X'].map(t=>`<button class="${tool===t?'on':''}" onclick="setTool('${t}')">${SYM[t]} ${{M:'Maschine',B:'Band',E:'Eingang',A:'Ausgang',X:'Abriss'}[t]}${COST[t]?' · '+COST[t]+' €':''}</button>`).join('')}</div>
+  <div class="g">${G.map((r,y)=>r.map((c,x)=>`<button class="${c}" onclick="place(${x},${y})" aria-label="Feld ${x+1}/${y+1}">${c?SYM[c]:''}</button>`).join('')).join('')}</div><div id="stats"></div></div>`}
+function upd(){const el=$('#stats');if(!el)return;const st=ST,val=IT[P.prod][1]*st.rate,inp=Object.entries(RC[P.prod][1]).reduce((a,[k,n])=>a+n*IT[k][1],0)*st.rate,m=val-inp-st.up;
+  el.innerHTML=`<table><tr><td>Maschinen verbunden</td><td>${st.ok} von ${st.n}</td></tr><tr><td>Ø Weg pro Maschine</td><td>${st.avg.toFixed(1)} Felder</td></tr><tr><td>Ausstoß</td><td>${st.rate.toFixed(2)} ${IT[P.prod][0]}/s</td></tr><tr><td>Unterhalt</td><td>${st.up.toFixed(2)} €/s</td></tr><tr><td>Grobe Marge (Richtpreise)</td><td class="${m<0?'neg':'pos'}">${m.toFixed(2)} €/s</td></tr></table>`}
+function vLager(){const f=V[P.fid],need=Object.keys(RC[P.prod][1]);
+  let h=`<div class="card"><h2>Mein Werk: ${IT[P.prod][0]}</h2><p>Fertig auf Lager: <b>${f.stock|0}</b> · Verkaufspreis ${ask(f)} €${f.price>0?' (von dir festgelegt)':' (automatisch)'}</p>
+  <div class="row">Eigener Preis (0 = automatisch) <input id="pr" type="number" min="0" value="${f.price||0}"><button onclick="setPrice()">Setzen</button></div>`;
+  if(FINAL.includes(P.prod))h+=`<div class="row">Stadt zahlt <b>${cityP(P.prod)} €</b><button onclick="trade(${P.fid},'city','${P.prod}',10)">10 verkaufen</button><button onclick="trade(${P.fid},'city','${P.prod}',1e9)">Alle</button></div><p class="muted">Der Stadtpreis sinkt bei großen Mengen und erholt sich langsam.</p>`;
+  if(need.length){h+='<h3>Werkslager (Material)</h3>';for(const k of need)h+=`<div class="row">${IT[k][0]}: <b>${Math.floor(f.inv[k]||0)}</b> im Werk · du trägst ${P.w[k]||0}<button onclick="trade(${P.fid},'load','${k}',10)">10 laden</button><button onclick="trade(${P.fid},'load','${k}',1e9)">Alle laden</button></div>`}
+  h+='</div><div class="card"><h3>Was du trägst</h3>';const ks=Object.keys(P.w).filter(k=>P.w[k]>0);
+  return h+(ks.length?ks.map(k=>`<div>${IT[k][0]}: ${P.w[k]}</div>`).join(''):'<p class="muted">Nichts. Kaufe auf der Karte Material bei anderen Fabriken.</p>')+'</div>'}
+function pick(msg){const el=$('#start');el.hidden=false;
+  const free=p=>Object.values(R).filter(f=>f.p===p&&!f.owner).length;
+  el.innerHTML=`<div class="in"><h1 style="font-size:32px;margin:0">Marktfabrik</h1><p>Eine gemeinsame Fabrikwelt für alle Spieler. Du übernimmst eine freie Fabrik, kaufst Material bei anderen (Spielern oder NPCs), verarbeitest es und verkaufst weiter. Freie Fabriken führt der Computer.</p>${msg?`<p class="neg">${msg}</p>`:''}
+  <p><label>Dein Name <input id="nm" value="${(P&&P.name)||'Spieler'}" maxlength="16"></label></p><h2>Was willst du produzieren?</h2><div class="pick">
+  ${Object.keys(RC).map(k=>{const n=Object.entries(RC[k][1]).map(([a,c])=>c+'× '+IT[a][0]).join(' + ');return `<button ${free(k)?'':'disabled'} onclick="go('${k}')"><b><span class="dot" style="background:${IT[k][2]}"></span>${IT[k][0]}</b><br>${RC[k][0]}<br><span class="muted">${n?'braucht '+n:'braucht kein Material'} · ${free(k)} frei</span></button>`}).join('')}</div></div>`}
+async function go(p){const ok=await claim(p,($('#nm').value||'Spieler').trim());if(!ok){pick('Diese Fabrik wurde gerade vergeben. Wähle eine andere.');return}enter()}
+function enter(){$('#start').hidden=true;P.w=P.w||{};ST=stats(G,P.prod);V=Object.fromEntries(Object.entries(R).map(([i,f])=>[i,proj(f)]));head();render()}
+function tick(){if(!P)return;tk++;V=Object.fromEntries(Object.entries(R).map(([i,f])=>[i,proj(f)]));
+  P.money-=ST.up;collect();if(tk%10===0)savePlayer();head();if(tab!=='fab')render()}
+Object.assign(window,{trade,place,setPrice,leave,go,
+  setTab:t=>{tab=t;render()},setTool:t=>{tool=t;render()},mapClick:e=>{const g=e.target.closest('[data-id]');if(g){sel=+g.dataset.id;render()}}});
+
+// Start
+try{
+  onValue(ref(db,'.info/serverTimeOffset'),s=>{off=s.val()||0});
+  const ps=await get(ref(db,'players/'+uid));
+  await new Promise((res,rej)=>onValue(ref(db,'world/factories'),s=>{if(!s.exists()){seed();return}R=s.val();if(Array.isArray(R))R=Object.fromEntries(R.map((f,i)=>[i,f]).filter(a=>a[1]));res()},rej));
+  const sp=ps.val();
+  if(sp&&R[sp.fid]&&R[sp.fid].owner===uid){P=sp;P.prod=R[sp.fid].p;G=R[sp.fid].grid?dec(R[sp.fid].grid):initGrid();sel=+sp.fid;enter()}else pick();
+  setInterval(tick,1000);
+}catch(e){$('#start').innerHTML='<div class="in"><h2>Verbindung fehlgeschlagen</h2><p>Prüfe, ob die Realtime Database im Testmodus läuft. Fehler: '+e.message+'</p></div>'}
+</script>
+</body>
+</html>
