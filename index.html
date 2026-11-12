@@ -70,7 +70,10 @@ const FINAL=['werk','brot'];
 const NN=['Nord','Ost','Süd','West','Berg','Tal','Fluss','See','Hain','Stein','Mark','Hafen'];
 const PRODS=['erz','holz','korn','eisen','brett','mehl','werk','brot','erz','holz','korn','eisen','brett','mehl','werk','brot','erz','korn','eisen','werk'];
 const POS=PRODS.map((_,i)=>{const r=Math.floor(i/5),c=i%5;return[12+c*19+((r*7+c*3)%5-2),14+r*24+((c*5+r)%3-1)]});
-const W=9,H=6,COST={B:4,E:30,A:30},UP={B:.02,E:0,A:0};
+const W=9,H=6,COST={E:30,A:30},UP={E:0,A:0};
+// Bänder haben eine Richtung: u=hoch, r=rechts, d=runter, l=links
+const DIR={u:[0,-1],r:[1,0],d:[0,1],l:[-1,0]},isB=c=>!!c&&'urdl'.includes(c),isM=c=>/^\d$/.test(c||'');
+for(const c of 'urdl'){COST[c]=4;UP[c]=.02}
 for(let i=1;i<=5;i++){COST[i]=120;UP[i]=.4}
 // Arbeitsschritte, die eine Fabrik selbst übernehmen kann (Reihenfolge = Stufen im Layout)
 const CHAIN={erz:['erz'],holz:['holz'],korn:['korn'],eisen:['erz','eisen'],brett:['holz','brett'],mehl:['korn','mehl'],werk:['erz','eisen','holz','brett','werk'],brot:['korn','mehl','holz','brot']};
@@ -80,27 +83,38 @@ let R={},V={},P=null,G=null,ST={rate:0,up:0,n:0,ok:0,avg:0},off=0,tab='map',sel=
 const nq=()=>Math.floor((Date.now()+off)/10000);
 const fref=id=>ref(db,'world/factories/'+id);
 const enc=g=>g.map(r=>r.map(c=>c||'.').join('')).join('/');
-const dec=(s,p)=>s.split('/').map(r=>[...r].map(c=>c==='.'?'':c==='M'?String(CHAIN[p].length):c));
-function initGrid(p){const g=Array.from({length:H},()=>Array(W).fill(''));g[2][0]='E';g[2][8]='A';g[2][4]=String(CHAIN[p].length);for(const x of [1,2,3,5,6,7])g[2][x]='B';return g}
+const dec=(s,p)=>s.split('/').map(r=>[...r].map(c=>c==='.'?'':c==='M'?String(CHAIN[p].length):c==='B'?'r':c));
+function initGrid(p){const g=Array.from({length:H},()=>Array(W).fill(''));g[2][0]='E';g[2][8]='A';g[2][4]=String(CHAIN[p].length);for(const x of [1,2,3,5,6,7])g[2][x]='r';return g}
 
 // Layout-Auswertung
-function bfs(g,ch){const d=Array.from({length:H},()=>Array(W).fill(Infinity)),q=[];
-  g.forEach((r,y)=>r.forEach((c,x)=>{if(c&&ch.includes(c)){d[y][x]=0;q.push([x,y])}}));
-  while(q.length){const [x,y]=q.shift();for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const a=x+dx,b=y+dy;if(a<0||b<0||a>=W||b>=H)continue;const c=g[b][a];if((c==='B'||c==='E'||c==='A')&&d[b][a]===Infinity){d[b][a]=d[y][x]+1;q.push([a,b])}}}return d}
-function near(d,x,y){let m=Infinity;for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const a=x+dx,b=y+dy;if(a<0||b<0||a>=W||b>=H)continue;if(d[b][a]+1<m)m=d[b][a]+1}return m}
+// Richtungsgraph: Bänder geben nur in Pfeilrichtung weiter, nebeneinanderliegende Bänder verbinden sich nicht
+function graph(g){const out=Array.from({length:W*H},()=>[]),inn=Array.from({length:W*H},()=>[]),at=(x,y)=>x<0||y<0||x>=W||y>=H?'':g[y][x];
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const c=g[y][x];if(!c||c==='A')continue;
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const a=x+dx,b=y+dy,t=at(a,b);if(!t||t==='E'||(c==='E'&&t==='A'))continue;
+      if(isB(c)&&(DIR[c][0]!==dx||DIR[c][1]!==dy))continue;
+      if(isB(t)&&DIR[t][0]===-dx&&DIR[t][1]===-dy)continue;
+      out[y*W+x].push(b*W+a);inn[b*W+a].push(y*W+x)}}
+  return{out,inn}}
+// Kürzeste Wege von Quellen (oder rückwärts von Zielen) – nur über Bänder hinweg
+function dist(g,gr,seeds,rev){const d=new Array(W*H).fill(Infinity),q=[],nb=rev?gr.inn:gr.out;
+  seeds.forEach(i=>{d[i]=0;q.push(i)});
+  while(q.length){const u=q.shift();for(const v of nb[u]){if(d[v]!==Infinity)continue;d[v]=d[u]+1;if(isB(g[Math.floor(v/W)][v%W]))q.push(v)}}
+  return d}
 function stats(g,p){
-  const ch=CHAIN[p],has={},tiles={};ch.forEach(it=>{tiles[it]=[];has[it]=false});
-  let up=0;g.forEach((r,y)=>r.forEach((c,x)=>{up+=UP[c]||0;if(/\d/.test(c)){const it=ch[+c-1];if(it){tiles[it].push([x,y]);has[it]=true}}}));
+  const ch=CHAIN[p],has={},tiles={},gr=graph(g),Ei=[],Ai=[];
+  ch.forEach(it=>{tiles[it]=[];has[it]=false});let up=0;
+  g.forEach((r,y)=>r.forEach((c,x)=>{up+=UP[c]||0;if(c==='E')Ei.push(y*W+x);if(c==='A')Ai.push(y*W+x);if(isM(c)){const it=ch[+c-1];if(it){tiles[it].push(y*W+x);has[it]=true}}}));
   const per={},ext={};
   (function dem(it,a){if(has[it]){per[it]=(per[it]||0)+a;for(const k in RC[it][1])dem(k,a*RC[it][1][k])}else ext[it]=(ext[it]||0)+a})(p,1);
-  const dA=bfs(g,'A'),dE=bfs(g,'E'),dS={};ch.forEach((it,i)=>dS[it]=bfs(g,String(i+1)));
+  const dE=dist(g,gr,Ei,false),dA=dist(g,gr,Ai,true),dS={};
+  for(const it of ch)if(has[it])dS[it]=dist(g,gr,tiles[it],false);
   const rows=[];let fin=has[p]?Infinity:0,n=0,ok=0;
   for(const it of ch){if(!has[it])continue;
-    const ci=ch.filter(c2=>has[c2]&&RC[c2][1][it]).map(c2=>ch.indexOf(c2)+1).join(''),dC=ci?bfs(g,ci):null;
+    const cs=ch.filter(c2=>has[c2]&&RC[c2][1][it]),dC=cs.length?dist(g,gr,cs.flatMap(c2=>tiles[c2]),true):null,dm=it===p?dA:dC;
     let r=0,nok=0;
-    for(const [x,y] of tiles[it]){let d=0,bad=false;
-      for(const k in RC[it][1]){const m=has[k]?near(dS[k],x,y):near(dE,x,y);if(m===Infinity)bad=true;else d+=m}
-      const o=it===p?near(dA,x,y):(dC?near(dC,x,y):Infinity);if(o===Infinity)bad=true;else d+=o;
+    for(const m of tiles[it]){let d=0,bad=false;
+      for(const k in RC[it][1]){const v=(has[k]?dS[k]:dE)[m];if(v===Infinity)bad=true;else d+=v}
+      const o=dm?dm[m]:Infinity;if(o===Infinity)bad=true;else d+=o;
       if(!bad){nok++;r+=1/(3+.4*d)}}
     n+=tiles[it].length;ok+=nok;rows.push({it,np:tiles[it].length,nok,r,per:per[it]||0});
     if(per[it])fin=Math.min(fin,r/per[it])}
@@ -152,9 +166,13 @@ function collect(){const f=R[P.fid];if(!f||!f.earn||busy)return;busy=true;let e=
   runTransaction(ref(db,'world/factories/'+P.fid+'/earn'),cur=>{e=cur||0;return 0}).then(()=>{P.money+=e;busy=false;savePlayer()}).catch(()=>busy=false)}
 function place(x,y){const c=G[y][x];
   if(tool==='X'){if(c){P.money+=Math.floor(COST[c]/2);G[y][x]=''}}
+  else if(isB(tool)&&isB(c)){if(c===tool)return;G[y][x]=tool}
   else if(!c&&P.money>=COST[tool]){P.money-=COST[tool];G[y][x]=tool}else return;
   ST=stats(G,P.prod);saveLayout();savePlayer();head();render()}
-function setPrice(){const v=Math.max(0,+$('#pr').value|0);runTransaction(fref(P.fid),cur=>{if(!cur||cur.owner!==uid)return;const f=proj(cur);f.price=v;return f})}
+function setPrice(){const v=Math.max(0,Math.floor(+$('#pr').value)||0);
+  runTransaction(fref(P.fid),cur=>{if(!cur||cur.owner!==uid)return;const f=proj(cur);f.price=v;return f})
+    .then(()=>{V=Object.fromEntries(Object.entries(R).map(([i,f])=>[i,proj(f)]));render()})
+    .catch(e=>alert('Preis konnte nicht gespeichert werden: '+e.message))}
 async function leave(){if(!P||!confirm('Fabrik aufgeben? Sie wird wieder von einem NPC geführt.'))return;
   const id=P.fid;await runTransaction(fref(id),cur=>{if(!cur||cur.owner!==uid)return;const f=proj(cur);delete f.owner;delete f.ownerName;delete f.grid;f.rate=0;f.price=0;f.nm=RC[f.p][0]+' '+NN[id%12]+(id>=12?' II':'');return f});
   await set(ref(db,'players/'+uid),null);P=null;G=null;pick()}
@@ -180,25 +198,25 @@ function fPanel(f,id){const need=Object.entries(needOf(f));
   if(need.length){h+='<h3>Verkaufen an diese Fabrik</h3>';for(const [k] of need)h+=`<div class="row"><span>${IT[k][0]}: <b>${bid(f,k)} €</b> (du trägst ${P.w[k]||0})</span><button onclick="trade(${id},'sell','${k}',1)">1</button><button onclick="trade(${id},'sell','${k}',10)">10</button><button onclick="trade(${id},'sell','${k}',1e9)">Alle</button></div>`}
   return h+'</div>'}
 function scene(){
-  const T=40,ch=CHAIN[P.prod],dA=bfs(G,'A'),act={},net=c=>c==='B'||c==='E'||c==='A',on=(x,y)=>G[y]&&G[y][x];
+  const T=40,ch=CHAIN[P.prod],gr=graph(G),act={};
   (ST.rows||[]).forEach(r=>act[r.it]=r.per>0&&r.nok>0);
-  let fl='',rl='',bt='',dash='',bld='',ov='';
+  let fl='',rl='',bt='',dash='',bld='',ov='',dead='';
   for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-    const c=G[y][x],cx=x*T+T/2,cy=y*T+T/2;
+    const c=G[y][x],cx=x*T+T/2,cy=y*T+T/2,id=y*W+x;
     fl+=`<rect x="${x*T}" y="${y*T}" width="${T}" height="${T}" fill="${(x+y)%2?'rgba(0,0,0,.06)':'rgba(255,255,255,.06)'}"/>`;
-    if(net(c)){for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy,n=on(nx,ny);if(!n)continue;
-        const mx=cx+dx*T/2,my=cy+dy*T/2,d1=dA[y][x],d2=net(n)?dA[ny][nx]:Infinity,seg=`M${cx} ${cy}L${mx} ${my}`,rev=`M${mx} ${my}L${cx} ${cy}`;
-        rl+=`<path d="${seg}"/>`;bt+=`<path d="${seg}"/>`;
-        if(net(n)&&isFinite(d1)&&isFinite(d2)&&d1!==d2)dash+=`<path class="flow" d="${d1>d2?seg:rev}"/>`}
-      rl+=`<circle cx="${cx}" cy="${cy}" r="1"/>`;bt+=`<circle cx="${cx}" cy="${cy}" r="1"/>`}
-    if(c==='E'||c==='A')bld+=`<rect x="${x*T+3}" y="${y*T+6}" width="${T-6}" height="${T-12}" rx="5" fill="#c2670c" stroke="rgba(0,0,0,.45)" stroke-width="1.5"/><text x="${cx}" y="${cy+3.5}" font-size="10" text-anchor="middle" style="fill:#fff;font-weight:700">${c==='E'?'IN ▶':'▶ OUT'}</text>`;
-    else if(/\d/.test(c)){const it=ch[+c-1];if(!it)continue;const a=act[it],col=IT[it][2];
+    if(isB(c)){const [ux,uy]=DIR[c],seg=`M${cx-ux*T/2} ${cy-uy*T/2}L${cx+ux*T/2} ${cy+uy*T/2}`;
+      rl+=`<path d="${seg}"/>`;bt+=`<path d="${seg}"/>`;dash+=`<path class="flow" d="${seg}"/>`;
+      for(const n of gr.inn[id]){const nx=n%W,ny=Math.floor(n/W);if(nx-x===-ux&&ny-y===-uy)continue;
+        const s2=`M${cx+(nx-x)*T/2} ${cy+(ny-y)*T/2}L${cx} ${cy}`;rl+=`<path d="${s2}"/>`;bt+=`<path d="${s2}"/>`;dash+=`<path class="flow" d="${s2}"/>`}
+      if(!gr.out[id].length)dead+=`<circle cx="${cx+ux*(T/2-3)}" cy="${cy+uy*(T/2-3)}" r="3.5" fill="#ef4444" stroke="#fff" stroke-width="1"/>`}
+    else if(c==='E'||c==='A')bld+=`<rect x="${x*T+3}" y="${y*T+6}" width="${T-6}" height="${T-12}" rx="5" fill="#c2670c" stroke="rgba(0,0,0,.45)" stroke-width="1.5"/><text x="${cx}" y="${cy+3.5}" font-size="10" text-anchor="middle" style="fill:#fff;font-weight:700">${c==='E'?'IN ▶':'▶ OUT'}</text>`;
+    else if(isM(c)){const it=ch[+c-1];if(!it)continue;const a=act[it],col=IT[it][2];
       bld+=`<g><rect x="${x*T+3}" y="${y*T+5}" width="${T-6}" height="${T-8}" rx="6" fill="${a?col:'#8a8f94'}" stroke="rgba(0,0,0,.5)" stroke-width="1.5"/><rect x="${x*T+3}" y="${y*T+5}" width="${T-6}" height="9" rx="4" fill="rgba(255,255,255,.28)"/><rect x="${x*T+8}" y="${y*T-1}" width="6" height="7" fill="#444"/>${a?`<circle class="puff" cx="${x*T+11}" cy="${y*T+2}" r="3" fill="#fff"/>`:''}<text class="${a?'spin':''}" x="${cx}" y="${cy+4}" font-size="14" text-anchor="middle" style="fill:#fff">⚙</text><text x="${cx}" y="${y*T+T-6}" font-size="7" text-anchor="middle" style="fill:#fff;font-weight:700">${IT[it][0].slice(0,5)}</text><circle cx="${x*T+T-9}" cy="${y*T+12}" r="2.5" fill="${a?'#4ade80':'#f87171'}"/></g>`}
     ov+=`<rect class="cell" data-x="${x}" data-y="${y}" x="${x*T}" y="${y*T}" width="${T}" height="${T}"/>`}
-  return `<svg class="fab" viewBox="0 0 ${W*T} ${H*T}" onclick="cellClick(event)" role="img" aria-label="Fabriklayout">${fl}<g fill="none" stroke-linecap="round"><g stroke="#9aa3aa" stroke-width="22">${rl}</g><g stroke="#3b4650" stroke-width="16">${bt}</g><g stroke="#e6e9ec" stroke-width="3" stroke-dasharray="3 9" opacity=".85">${dash}</g></g>${bld}${ov}</svg>`}
+  return `<svg class="fab" viewBox="0 0 ${W*T} ${H*T}" onclick="cellClick(event)" role="img" aria-label="Fabriklayout">${fl}<g fill="none" stroke-linecap="butt"><g stroke="#9aa3aa" stroke-width="22">${rl}</g><g stroke="#3b4650" stroke-width="16">${bt}</g><g stroke="#e6e9ec" stroke-width="3" stroke-dasharray="3 9" opacity=".85">${dash}</g></g>${bld}${dead}${ov}</svg>`}
 function vFab(){const ch=CHAIN[P.prod];
-  const tl=[...ch.map((it,i)=>[String(i+1),RC[it][0],COST[1],IT[it][2]]),['B','Band',COST.B],['E','Eingang',COST.E],['A','Ausgang',COST.A],['X','Abriss',0]];
-  return `<div class="card"><h2>${RC[P.prod][0]}: Layout</h2><p class="muted">Baue Arbeitsschritte hintereinander: ${ch.map(it=>RC[it][0]).join(' → ')}. Jede Stufe, die du baust, stellt ihr Zwischenprodukt selbst her. Fehlt eine Stufe, lädst du dieses Material fertig ins Werkslager (Kauf bei anderen). Maschinen verbindest du über Bänder oder direktes Nebeneinander. Der Eingang (IN) holt Material aus dem Werkslager, der Ausgang (OUT) liefert Fertiges. Die Stufe mit dem kleinsten Durchsatz bestimmt den Ausstoß. Deine Fabrik produziert auch offline.</p>
+  const tl=[...ch.map((it,i)=>[String(i+1),RC[it][0],COST[1],IT[it][2]]),...[['r','Band →'],['d','Band ↓'],['l','Band ←'],['u','Band ↑']].map(t=>[t[0],t[1],COST.r]),['E','Eingang',COST.E],['A','Ausgang',COST.A],['X','Abriss',0]];
+  return `<div class="card"><h2>${RC[P.prod][0]}: Layout</h2><p class="muted">Baue Arbeitsschritte hintereinander: ${ch.map(it=>RC[it][0]).join(' → ')}. Jede Stufe, die du baust, stellt ihr Zwischenprodukt selbst her. Fehlt eine Stufe, lädst du dieses Material fertig ins Werkslager (Kauf bei anderen). Bänder haben eine Richtung und geben nur in Pfeilrichtung weiter. Nebeneinanderliegende Bänder verbinden sich nicht, ein rotes Ende zeigt eine Sackgasse. Klickst du mit einem Bandwerkzeug auf ein vorhandenes Band, drehst du es kostenlos. Maschinen nehmen Material aus Bändern, die auf sie zeigen, und geben es an ein Band ab, das von ihnen wegführt. Direkt nebeneinander stehende Maschinen reichen es auch ohne Band weiter. Der Eingang (IN) holt Material aus dem Werkslager, der Ausgang (OUT) liefert Fertiges. Die Stufe mit dem kleinsten Durchsatz bestimmt den Ausstoß. Deine Fabrik produziert auch offline.</p>
   <div class="tools">${tl.map(t=>`<button class="${tool===t[0]?'on':''}" onclick="setTool('${t[0]}')">${t[3]?`<span class="sw" style="background:${t[3]}"></span>`:''}${t[1]}${t[2]?' · '+t[2]+' €':''}</button>`).join('')}</div>
   ${scene()}<div id="stats"></div></div>`}
 function upd(){const el=$('#stats');if(!el)return;const st=ST,ex=Object.entries(st.ext||{}),
@@ -210,7 +228,7 @@ function upd(){const el=$('#stats');if(!el)return;const st=ST,ex=Object.entries(
   <tr><td colspan="2">Grobe Marge (Richtpreise)</td><td class="${m<0?'neg':'pos'}">${m.toFixed(2)} €/s</td></tr></table>`}
 function vLager(){const f=V[P.fid],need=Object.keys(needOf(f));
   let h=`<div class="card"><h2>Mein Werk: ${IT[P.prod][0]}</h2><p>Fertig auf Lager: <b>${f.stock|0}</b> · Verkaufspreis ${ask(f)} €${f.price>0?' (von dir festgelegt)':' (automatisch)'}</p>
-  <div class="row">Eigener Preis (0 = automatisch) <input id="pr" type="number" min="0" value="${f.price||0}"><button onclick="setPrice()">Setzen</button></div>`;
+  <div class="row">Eigener Preis (0 = automatisch) <input id="pr" type="number" min="0" value="${f.price||0}" onkeydown="if(event.key==='Enter')setPrice()"><button onclick="setPrice()">Setzen</button></div>`;
   if(FINAL.includes(P.prod))h+=`<div class="row">Stadt zahlt <b>${cityP(P.prod)} €</b><button onclick="trade(${P.fid},'city','${P.prod}',10)">10 verkaufen</button><button onclick="trade(${P.fid},'city','${P.prod}',1e9)">Alle</button></div><p class="muted">Der Stadtpreis sinkt bei großen Mengen und erholt sich langsam.</p>`;
   if(need.length){h+='<h3>Werkslager (Material)</h3>';for(const k of need)h+=`<div class="row">${IT[k][0]}: <b>${Math.floor(f.inv[k]||0)}</b> im Werk · du trägst ${P.w[k]||0}<button onclick="trade(${P.fid},'load','${k}',10)">10 laden</button><button onclick="trade(${P.fid},'load','${k}',1e9)">Alle laden</button></div>`}
   h+='</div><div class="card"><h3>Was du trägst</h3>';const ks=Object.keys(P.w).filter(k=>P.w[k]>0);
@@ -219,11 +237,14 @@ function pick(msg){const el=$('#start');el.hidden=false;
   const free=p=>Object.values(R).filter(f=>f.p===p&&!f.owner).length;
   el.innerHTML=`<div class="in"><h1 style="font-size:32px;margin:0">Marktfabrik</h1><p>Eine gemeinsame Fabrikwelt für alle Spieler. Du übernimmst eine freie Fabrik, kaufst Material bei anderen (Spielern oder NPCs), verarbeitest es und verkaufst weiter. Freie Fabriken führt der Computer.</p>${msg?`<p class="neg">${msg}</p>`:''}
   <p><label>Dein Name <input id="nm" value="${(P&&P.name)||'Spieler'}" maxlength="16"></label></p><h2>Was willst du produzieren?</h2><div class="pick">
-  ${Object.keys(RC).map(k=>{const n=Object.entries(RC[k][1]).map(([a,c])=>c+'× '+IT[a][0]).join(' + ');return `<button ${free(k)?'':'disabled'} onclick="go('${k}')"><b><span class="dot" style="background:${IT[k][2]}"></span>${IT[k][0]}</b><br>${RC[k][0]}<br><span class="muted">${n?'braucht '+n:'braucht kein Material'} · ${free(k)} frei</span></button>`}).join('')}</div></div>`}
+  ${Object.keys(RC).map(k=>{const n=Object.entries(RC[k][1]).map(([a,c])=>c+'× '+IT[a][0]).join(' + ');return `<button ${free(k)?'':'disabled'} onclick="go('${k}')"><b><span class="dot" style="background:${IT[k][2]}"></span>${IT[k][0]}</b><br>${RC[k][0]}<br><span class="muted">${n?'braucht '+n:'braucht kein Material'} · ${free(k)} frei<br>Schritte: ${CHAIN[k].map(i=>RC[i][0]).join(' → ')}</span></button>`}).join('')}</div></div>`}
 async function go(p){const ok=await claim(p,($('#nm').value||'Spieler').trim());if(!ok){pick('Diese Fabrik wurde gerade vergeben. Wähle eine andere.');return}enter()}
-function enter(){$('#start').hidden=true;P.w=P.w||{};ST=stats(G,P.prod);tool=String(CHAIN[P.prod].length);if(R[P.fid]&&!R[P.fid].need&&Object.keys(RC[P.prod][1]).length)saveLayout();V=Object.fromEntries(Object.entries(R).map(([i,f])=>[i,proj(f)]));head();render()}
+function enter(){$('#start').hidden=true;P.w=P.w||{};ST=stats(G,P.prod);tool=String(CHAIN[P.prod].length);if(R[P.fid]&&((!R[P.fid].need&&Object.keys(RC[P.prod][1]).length)||/B/.test(R[P.fid].grid||'')))saveLayout();V=Object.fromEntries(Object.entries(R).map(([i,f])=>[i,proj(f)]));head();render()}
+let down=false;
+addEventListener('pointerdown',()=>down=true);addEventListener('pointerup',()=>down=false);addEventListener('pointercancel',()=>down=false);
+const hold=()=>down||(document.activeElement&&document.activeElement.tagName==='INPUT');
 function tick(){if(!P)return;tk++;V=Object.fromEntries(Object.entries(R).map(([i,f])=>[i,proj(f)]));
-  P.money-=ST.up;collect();if(tk%10===0)savePlayer();head();if(tab!=='fab')render()}
+  P.money-=ST.up;collect();if(tk%10===0)savePlayer();head();if(tab!=='fab'&&!hold())render()}
 Object.assign(window,{trade,place,setPrice,leave,go,cellClick:e=>{const r=e.target.closest('.cell');if(r)place(+r.dataset.x,+r.dataset.y)},
   setTab:t=>{tab=t;render()},setTool:t=>{tool=t;render()},mapClick:e=>{const g=e.target.closest('[data-id]');if(g){sel=+g.dataset.id;render()}}});
 
